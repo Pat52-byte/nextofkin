@@ -10,3 +10,14 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.8
+      - key: PAYPAL_BASE_URL
+        value: https://api-m.sandbox.paypal.com
+      # Secrets: set by hand in the Render dashboard, never stored in the repo.
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: SERVICE_API_KEY
+        sync: false
+      - key: PSEUDONYM_KEY
+        sync: false
