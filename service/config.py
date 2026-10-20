@@ -22,6 +22,8 @@ class Settings:
     service_api_key: str
     # Key for turning names and emails into stable codes before the AI sees them.
     pseudonym_key: str
+    # Postgres (Neon) holding owners' levels, agents and held payments.
+    database_url: str
 
 
 def get_settings() -> Settings:
@@ -33,4 +35,5 @@ def get_settings() -> Settings:
         ).rstrip("/"),
         service_api_key=os.environ.get("SERVICE_API_KEY", ""),
         pseudonym_key=os.environ.get("PSEUDONYM_KEY", ""),
+        database_url=os.environ.get("DATABASE_URL", ""),
     )

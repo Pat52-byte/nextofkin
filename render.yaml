@@ -21,3 +21,5 @@ services:
         sync: false
       - key: PSEUDONYM_KEY
         sync: false
+      - key: DATABASE_URL
+        sync: false

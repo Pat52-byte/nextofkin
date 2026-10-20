@@ -19,8 +19,21 @@ AI agents now pay on our behalf. If their owner falls ill, ends up in hospital o
 |---|---|
 | `GET /health` | Liveness check, no key needed |
 | `GET /map?days=30` | The owner's payments over the last 1–31 days: PayPal bookkeeping removed, repeated payments grouped, recurring ones marked, people replaced by stable codes |
+| `POST /owners` | Register an owner and their PayPal Vault permission |
+| `GET /owners/{email}` | The owner's plan level and agents |
+| `POST /owners/{email}/pause` | Level 1: non-essential agents stop and their held payments are cancelled |
+| `POST /owners/{email}/resume` | The owner is back: the plan returns to normal |
+| `GET /owners/{email}/events` | Every gate decision, newest first |
+| `POST /agents` | Register an agent and return its key, once |
+| `POST /agents/{id}/suspend`, `/activate`, `/revoke` | Change one agent without touching the others |
+| `POST /gate/pay` | **Agents only**, with `X-Agent-Key`: ask to pay. The money is held on PayPal, not taken |
+| `POST /gate/settle` | Complete the held payments that may still go through |
 
-Every endpoint except `/health` requires the header `X-Api-Key`.
+Every endpoint except `/health` and `/gate/pay` requires the header `X-Api-Key`.
+
+## How the gate decides
+
+Agents never see the owner's PayPal permission. They can only ask the gate, which checks, in order: the agent's status, the owner's plan level, whether PayPal is connected, the currency and the agent's spending cap. When the owner stops answering, non-essential agents are refused and their held payments are cancelled, while essential agents such as a utility bills agent keep paying. Every decision is recorded.
 
 ## Configuration
 
@@ -32,6 +45,7 @@ Set these in `service/.env` locally and in the Render dashboard in production. N
 | `PAYPAL_BASE_URL` | `https://api-m.sandbox.paypal.com` |
 | `SERVICE_API_KEY` | Shared secret Zapier sends in `X-Api-Key` |
 | `PSEUDONYM_KEY` | Key used to turn people's details into stable codes before the AI sees them |
+| `DATABASE_URL` | Postgres connection string (Neon) where the gate keeps owners, agents and held payments |
 
 ## Run the service locally
 
