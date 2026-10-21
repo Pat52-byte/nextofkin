@@ -39,6 +39,46 @@ def refusal(
     return None
 
 
+def simulate(level: str, agents: list[dict], holds: list[dict]) -> dict:
+    """What a plan level would do right now, without doing it (the rehearsal, Z3).
+
+    `agents` need id, name, category, status; `holds` need agent_id, amount,
+    currency, description.
+    """
+    if level not in LEVELS:
+        raise ValueError(f"Unknown level: {level}")
+    by_id = {agent["id"]: agent for agent in agents}
+    stopped, continuing = [], []
+    for agent in agents:
+        if agent["status"] != "active":
+            continue
+        reason = refusal(level, True, "active", agent["category"], Decimal("1"), Decimal("1"), CURRENCY)
+        entry = {"agent_id": agent["id"], "name": agent["name"], "category": agent["category"]}
+        if reason:
+            stopped.append({**entry, "reason": reason})
+        else:
+            continuing.append(entry)
+    cancelled, completed = [], []
+    for hold in holds:
+        agent = by_id.get(hold["agent_id"])
+        if agent is None:
+            continue
+        item = {"agent_id": hold["agent_id"], "amount": str(hold["amount"]),
+                "currency": hold["currency"], "description": hold.get("description")}
+        if agent["status"] == "active" and may_capture(level, agent["category"]):
+            completed.append(item)
+        else:
+            cancelled.append(item)
+    return {
+        "level": level,
+        "agents_stopped": stopped,
+        "agents_continuing": continuing,
+        "held_payments_cancelled": cancelled,
+        "held_payments_still_completed": completed,
+        "note": "Rehearsal only. Nothing was changed.",
+    }
+
+
 def may_capture(owner_level: str, agent_category: str) -> bool:
     """A held payment is completed only if the agent could still start it now."""
     if owner_level == "closure":

@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from gate import may_capture, refusal
+from gate import may_capture, refusal, simulate
 
 
 def check(level="normal", vault=True, status="active", category="non_essential",
@@ -50,3 +50,34 @@ def test_held_payments_complete_only_when_the_agent_could_still_pay():
     assert may_capture("pause", "essential")
     assert may_capture("protection", "essential")
     assert not may_capture("closure", "essential")
+
+
+AGENTS = [
+    {"id": "grocery", "name": "Grocery agent", "category": "non_essential", "status": "active"},
+    {"id": "bills", "name": "Utility bills agent", "category": "essential", "status": "active"},
+    {"id": "old", "name": "Old agent", "category": "non_essential", "status": "suspended"},
+]
+HOLDS = [
+    {"agent_id": "grocery", "amount": "42.50", "currency": "USD", "description": "Groceries"},
+    {"agent_id": "bills", "amount": "85.00", "currency": "USD", "description": "Electricity"},
+]
+
+
+def test_rehearsal_of_a_pause_stops_shopping_but_keeps_bills():
+    result = simulate("pause", AGENTS, HOLDS)
+    assert [a["agent_id"] for a in result["agents_stopped"]] == ["grocery"]
+    assert [a["agent_id"] for a in result["agents_continuing"]] == ["bills"]
+    assert [h["agent_id"] for h in result["held_payments_cancelled"]] == ["grocery"]
+    assert [h["agent_id"] for h in result["held_payments_still_completed"]] == ["bills"]
+    assert "Nothing was changed" in result["note"]
+
+
+def test_rehearsal_of_a_closure_stops_every_agent():
+    result = simulate("closure", AGENTS, HOLDS)
+    assert {a["agent_id"] for a in result["agents_stopped"]} == {"grocery", "bills"}
+    assert result["held_payments_still_completed"] == []
+
+
+def test_rehearsal_rejects_an_unknown_level():
+    with pytest.raises(ValueError):
+        simulate("panic", AGENTS, HOLDS)

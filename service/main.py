@@ -19,11 +19,11 @@ from pydantic import BaseModel, Field
 
 import db
 from config import get_settings
-from gate import CURRENCY, may_capture, refusal
+from gate import CURRENCY, LEVELS, may_capture, refusal, simulate
 from mapping import build_map
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.3.0")
+app = FastAPI(title="NextOfKin service", version="0.4.0")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -187,6 +187,27 @@ def resume_owner(email: str) -> dict:
         conn.execute("update owners set level = 'normal', updated_at = now() where email = %s", (email,))
         db.log_event(conn, email, "resume", "done", reason="The owner answered.")
     return {"email": email, "level": "normal"}
+
+
+@app.get("/owners/{email}/rehearsal", dependencies=[Depends(require_api_key)])
+def rehearsal(email: str, level: str = Query("pause")) -> dict:
+    """Show what a level would do to this owner's agents and held payments,
+    without changing anything (the rehearsal at the end of onboarding)."""
+    if level not in LEVELS or level == "normal":
+        raise HTTPException(status_code=422, detail="level must be pause, protection or closure.")
+    with db.connect() as conn:
+        load_owner(conn, email)
+        agents = conn.execute(
+            "select id, name, category, status from agents where owner_email = %s order by created_at",
+            (email,),
+        ).fetchall()
+        holds = conn.execute(
+            """select agent_id, amount, currency, description from holds
+               where owner_email = %s and status = 'held'""",
+            (email,),
+        ).fetchall()
+        db.log_event(conn, email, "rehearsal", "done", reason=f"Rehearsal of level {level}")
+    return simulate(level, agents, holds)
 
 
 @app.get("/owners/{email}/events", dependencies=[Depends(require_api_key)])
