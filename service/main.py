@@ -23,7 +23,7 @@ from gate import CURRENCY, LEVELS, may_capture, refusal, simulate
 from mapping import build_map
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.4.0")
+app = FastAPI(title="NextOfKin service", version="0.4.1")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -211,14 +211,21 @@ def rehearsal(email: str, level: str = Query("pause")) -> dict:
 
 
 @app.get("/owners/{email}/events", dependencies=[Depends(require_api_key)])
-def owner_events(email: str, limit: int = Query(50, ge=1, le=500)) -> dict:
+def owner_events(email: str, limit: int = Query(50, ge=1, le=500),
+                 since_minutes: int | None = Query(None, ge=1, le=44640)) -> dict:
+    """Gate decisions, newest first. Each has a stable `id`, so a sync can skip
+    the ones it has already copied; `since_minutes` limits it to recent ones."""
+    query = """select id, at, agent_id, action, amount, currency, outcome, reason, paypal_id
+               from gate_events where owner_email = %s"""
+    params: list = [email]
+    if since_minutes:
+        query += " and at >= now() - make_interval(mins => %s)"
+        params.append(since_minutes)
+    query += " order by at desc limit %s"
+    params.append(limit)
     with db.connect() as conn:
         load_owner(conn, email)
-        events = conn.execute(
-            """select at, agent_id, action, amount, currency, outcome, reason, paypal_id
-               from gate_events where owner_email = %s order by at desc limit %s""",
-            (email, limit),
-        ).fetchall()
+        events = conn.execute(query, params).fetchall()
     return {"email": email, "events": events}
 
 
@@ -310,7 +317,9 @@ def gate_pay(body: PaymentIn, x_agent_key: str = Header(default="")) -> JSONResp
         if reason:
             db.log_event(conn, owner["email"], "pay", "refused", agent_id=agent["id"],
                          amount=body.amount, currency=body.currency, reason=reason)
-            return JSONResponse(status_code=403, content={"outcome": "refused", "reason": reason})
+            # 200, not 403: a refusal is a normal answer the agent must read and pass
+            # on, and no-code tools stop the whole flow on a 4xx (control U12).
+            return JSONResponse(status_code=200, content={"outcome": "refused", "reason": reason})
 
         order = paypal().request(
             "POST",

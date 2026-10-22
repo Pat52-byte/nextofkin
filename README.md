@@ -26,7 +26,7 @@ AI agents now pay on our behalf. If their owner falls ill, ends up in hospital o
 | `GET /owners/{email}/events` | Every gate decision, newest first |
 | `POST /agents` | Register an agent and return its key, once |
 | `POST /agents/{id}/suspend`, `/activate`, `/revoke` | Change one agent without touching the others |
-| `POST /gate/pay` | **Agents only**, with `X-Agent-Key`: ask to pay. The money is held on PayPal, not taken |
+| `POST /gate/pay` | **Agents only**, with `X-Agent-Key`: ask to pay. The money is held on PayPal, not taken. A refusal is a normal `200` answer with `"outcome": "refused"` and the reason |
 | `POST /gate/settle` | Complete the held payments that may still go through |
 
 Every endpoint except `/health` and `/gate/pay` requires the header `X-Api-Key`.
