@@ -23,7 +23,7 @@ from gate import CURRENCY, LEVELS, may_capture, refusal, simulate
 from mapping import build_map
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.4.2")
+app = FastAPI(title="NextOfKin service", version="0.4.3")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -350,9 +350,11 @@ def gate_pay(body: PaymentIn, x_agent_key: str = Header(default="")) -> JSONResp
         )
         db.log_event(conn, owner["email"], "pay", "held", agent_id=agent["id"], amount=body.amount,
                      currency=body.currency, paypal_id=authorization_id)
-    return JSONResponse(status_code=201, content=gate_answer(
-        "held", "Payment held. It will be completed unless the owner's plan is paused first.",
-        authorization_id=authorization_id))
+    message = ("Payment held. It will be completed unless the owner's plan is paused first."
+               if owner["level"] == "normal" else
+               "Payment held. Essential payments keep going while the owner's plan is paused.")
+    return JSONResponse(status_code=201, content=gate_answer("held", message,
+                                                             authorization_id=authorization_id))
 
 
 def gate_answer(outcome: str, message: str, reason: str = "", authorization_id: str = "") -> dict:
