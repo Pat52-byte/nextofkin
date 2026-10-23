@@ -19,6 +19,7 @@ NOISE_PREFIXES = ("T01", "T03", "T04", "T11", "T15", "T19")
 KIND_BY_CODE = {
     "T0001": "payout",  # money we sent, e.g. rent paid on the owner's behalf
     "T0002": "subscription",  # a charge on a PayPal subscription
+    "T0003": "agent_payment",  # charged with the owner's saved permission, i.e. by an agent
 }
 # S = completed, P = pending. Denied or reversed payments are not part of the map.
 KEPT_STATUSES = {"S", "P"}
@@ -50,7 +51,11 @@ def build_map(transactions: list[dict], key: str) -> dict:
         counterparty = pseudonym(person, key, "P") if person else None
 
         kind = KIND_BY_CODE.get(code, "payment")
-        subject = _short(info.get("transaction_subject"))
+        # Agent payments carry their description on the cart item, not the subject.
+        # Without it the AI classifies blind, so always look there too.
+        items = transaction.get("cart_info", {}).get("item_details", [])
+        item_names = ", ".join(i["item_name"] for i in items if i.get("item_name"))
+        subject = _short(info.get("transaction_subject") or item_names or None)
         subscription_id = (
             info.get("paypal_reference_id") if info.get("paypal_reference_id_type") == "RP" else None
         )

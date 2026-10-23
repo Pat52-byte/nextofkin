@@ -86,3 +86,11 @@ def test_denied_payments_are_left_out():
     result = build_map([transaction("T0006", "20.00", "2026-10-02T09:00:00Z", status="D")], KEY)
     assert result["payments"] == []
     assert result["ignored_bookkeeping"] == 1
+
+
+def test_agent_payments_take_their_description_from_the_cart():
+    bill = transaction("T0003", "85.00", "2026-10-20T09:00:00Z", payer=OWNER)
+    bill["cart_info"] = {"item_details": [{"item_name": "Electricity bill"}]}
+    [item] = build_map([bill], KEY)["payments"]
+    assert item["kind"] == "agent_payment"
+    assert item["description"] == "Electricity bill"

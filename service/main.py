@@ -23,7 +23,7 @@ from gate import CURRENCY, LEVELS, may_capture, refusal, simulate
 from mapping import build_map
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.4.3")
+app = FastAPI(title="NextOfKin service", version="0.4.4")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
