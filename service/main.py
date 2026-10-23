@@ -23,7 +23,7 @@ from gate import CURRENCY, LEVELS, may_capture, refusal, simulate
 from mapping import build_map
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.4.1")
+app = FastAPI(title="NextOfKin service", version="0.4.2")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -319,7 +319,8 @@ def gate_pay(body: PaymentIn, x_agent_key: str = Header(default="")) -> JSONResp
                          amount=body.amount, currency=body.currency, reason=reason)
             # 200, not 403: a refusal is a normal answer the agent must read and pass
             # on, and no-code tools stop the whole flow on a 4xx (control U12).
-            return JSONResponse(status_code=200, content={"outcome": "refused", "reason": reason})
+            return JSONResponse(status_code=200, content=gate_answer(
+                "refused", "Payment refused by the NextOfKin gate. Nothing was charged.", reason=reason))
 
         order = paypal().request(
             "POST",
@@ -339,8 +340,8 @@ def gate_pay(body: PaymentIn, x_agent_key: str = Header(default="")) -> JSONResp
             db.log_event(conn, owner["email"], "pay", "error", agent_id=agent["id"], amount=body.amount,
                          currency=body.currency, reason=f"PayPal order status {order.get('status')}",
                          paypal_id=order.get("id"))
-            return JSONResponse(status_code=502, content={"outcome": "error",
-                                                          "reason": "PayPal did not hold the payment."})
+            return JSONResponse(status_code=502, content=gate_answer(
+                "error", "The payment could not be held.", reason="PayPal did not hold the payment."))
         authorization_id = authorizations[0]["id"]
         conn.execute(
             """insert into holds (authorization_id, owner_email, agent_id, amount, currency, description)
@@ -349,11 +350,16 @@ def gate_pay(body: PaymentIn, x_agent_key: str = Header(default="")) -> JSONResp
         )
         db.log_event(conn, owner["email"], "pay", "held", agent_id=agent["id"], amount=body.amount,
                      currency=body.currency, paypal_id=authorization_id)
-    return JSONResponse(status_code=201, content={
-        "outcome": "held",
-        "authorization_id": authorization_id,
-        "message": "Payment held. It will be completed unless the owner's plan is paused first.",
-    })
+    return JSONResponse(status_code=201, content=gate_answer(
+        "held", "Payment held. It will be completed unless the owner's plan is paused first.",
+        authorization_id=authorization_id))
+
+
+def gate_answer(outcome: str, message: str, reason: str = "", authorization_id: str = "") -> dict:
+    """Every gate answer has the same four fields, so a no-code flow can map
+    all of them whatever the outcome."""
+    return {"outcome": outcome, "message": message, "reason": reason,
+            "authorization_id": authorization_id}
 
 
 @app.post("/gate/settle", dependencies=[Depends(require_api_key)])
