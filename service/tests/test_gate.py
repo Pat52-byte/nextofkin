@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from gate import may_capture, refusal, simulate
+from gate import fund_refusal, may_capture, refusal, simulate
 
 
 def check(level="normal", vault=True, status="active", category="non_essential",
@@ -81,3 +81,10 @@ def test_rehearsal_of_a_closure_stops_every_agent():
 def test_rehearsal_rejects_an_unknown_level():
     with pytest.raises(ValueError):
         simulate("panic", AGENTS, HOLDS)
+
+
+def test_emergency_fund_goes_only_to_a_registered_account_up_to_the_cap_once():
+    assert fund_refusal(Decimal("500"), "contact@example.com", False) is None
+    assert "registered" in fund_refusal(Decimal("500"), None, False)
+    assert "did not set" in fund_refusal(Decimal("0"), "contact@example.com", False)
+    assert "already sent" in fund_refusal(Decimal("500"), "contact@example.com", True)

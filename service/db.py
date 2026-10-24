@@ -43,6 +43,18 @@ create table if not exists holds (
     settled_at        timestamptz
 );
 
+-- Emergency fund settings, registered while the owner is well (G5, G6).
+alter table owners add column if not exists fund_cap numeric(12, 2);
+alter table owners add column if not exists fund_email text;
+
+-- Subscriptions suspended at level 2, so a returning owner gets them back.
+create table if not exists suspended_subscriptions (
+    subscription_id  text primary key,
+    owner_email      text not null references owners (email),
+    suspended_at     timestamptz not null default now(),
+    reactivated_at   timestamptz
+);
+
 create table if not exists gate_events (
     id           bigserial primary key,
     at           timestamptz not null default now(),

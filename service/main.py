@@ -19,11 +19,11 @@ from pydantic import BaseModel, Field
 
 import db
 from config import get_settings
-from gate import CURRENCY, LEVELS, may_capture, refusal, simulate
+from gate import CURRENCY, LEVELS, fund_refusal, may_capture, refusal, simulate
 from mapping import build_map
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.4.4")
+app = FastAPI(title="NextOfKin service", version="0.5.0")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -95,6 +95,8 @@ def payment_map(days: int = Query(30, ge=1, le=31)) -> dict:
 class OwnerIn(BaseModel):
     email: str
     vault_id: str | None = None
+    fund_cap: Decimal | None = Field(default=None, ge=0)
+    fund_email: str | None = None
 
 
 def load_owner(conn, email: str) -> dict:
@@ -137,14 +139,29 @@ def void_holds(conn, owner_email: str, *, agent_id: str | None = None,
 @app.post("/owners", dependencies=[Depends(require_api_key)])
 def upsert_owner(body: OwnerIn) -> dict:
     with db.connect() as conn:
+        current = conn.execute("select * from owners where email = %s", (body.email,)).fetchone()
+        if current and current["level"] != "normal" and (
+            (body.fund_email and body.fund_email != current["fund_email"])
+            or (body.fund_cap is not None and body.fund_cap != current["fund_cap"])
+        ):
+            # G5, G6: where the emergency fund goes, and how much, is frozen during an emergency.
+            raise HTTPException(status_code=409, detail="The emergency fund can't be changed during an emergency.")
         conn.execute(
-            """insert into owners (email, vault_id) values (%s, %s)
+            """insert into owners (email, vault_id, fund_cap, fund_email) values (%s, %s, %s, %s)
                on conflict (email) do update
-               set vault_id = coalesce(excluded.vault_id, owners.vault_id), updated_at = now()""",
-            (body.email, body.vault_id),
+               set vault_id = coalesce(excluded.vault_id, owners.vault_id),
+                   fund_cap = coalesce(excluded.fund_cap, owners.fund_cap),
+                   fund_email = coalesce(excluded.fund_email, owners.fund_email),
+                   updated_at = now()""",
+            (body.email, body.vault_id, body.fund_cap, body.fund_email),
         )
         owner = load_owner(conn, body.email)
-    return {"email": owner["email"], "level": owner["level"], "has_vault": bool(owner["vault_id"])}
+    return owner_summary(owner)
+
+
+def owner_summary(owner: dict) -> dict:
+    return {"email": owner["email"], "level": owner["level"], "has_vault": bool(owner["vault_id"]),
+            "fund_cap": owner["fund_cap"], "has_fund_account": bool(owner["fund_email"])}
 
 
 @app.get("/owners/{email}", dependencies=[Depends(require_api_key)])
@@ -156,8 +173,7 @@ def get_owner(email: str) -> dict:
                where owner_email = %s order by created_at""",
             (email,),
         ).fetchall()
-    return {"email": owner["email"], "level": owner["level"],
-            "has_vault": bool(owner["vault_id"]), "agents": agents}
+    return {**owner_summary(owner), "agents": agents}
 
 
 @app.post("/owners/{email}/pause", dependencies=[Depends(require_api_key)])
@@ -177,16 +193,112 @@ def pause_owner(email: str) -> dict:
             "voided_authorizations": voided}
 
 
+class ProtectIn(BaseModel):
+    # Who confirmed the emergency: level 2 never starts on the AI's word alone (G2).
+    confirmed_by: str = Field(min_length=3)
+    subscription_ids: list[str] = []
+    send_fund: bool = True
+
+
+@app.post("/owners/{email}/protect", dependencies=[Depends(require_api_key)])
+def protect_owner(email: str, body: ProtectIn) -> dict:
+    """Plan level 2, after the trusted contact confirms: non-essential agents stay
+    stopped, non-essential subscriptions are suspended (not cancelled), essential
+    agents keep paying, and the emergency fund goes to the account registered in
+    advance, up to the owner's cap, once (G3, G4, G5, G6)."""
+    with db.connect() as conn:
+        owner = load_owner(conn, email)
+        if owner["level"] == "closure":
+            raise HTTPException(status_code=409, detail="The plan is closed.")
+        conn.execute("update owners set level = 'protection', updated_at = now() where email = %s", (email,))
+        db.log_event(conn, email, "protect", "done", reason=f"Level 2, confirmed by {body.confirmed_by}")
+        voided = void_holds(conn, email, non_essential_only=True,
+                            reason="Plan in protection: payments by non-essential agents stay cancelled.")
+
+        suspended, failed = [], []
+        for subscription_id in body.subscription_ids:
+            try:
+                paypal().request("POST", f"/v1/billing/subscriptions/{subscription_id}/suspend",
+                                 json={"reason": "NextOfKin: the owner can't be reached. This can be undone."})
+            except PayPalError as error:
+                failed.append({"subscription_id": subscription_id, "reason": error.message})
+                db.log_event(conn, email, "suspend_subscription", "error", reason=error.message,
+                             paypal_id=subscription_id)
+                continue
+            conn.execute(
+                """insert into suspended_subscriptions (subscription_id, owner_email) values (%s, %s)
+                   on conflict (subscription_id) do update
+                   set suspended_at = now(), reactivated_at = null""",
+                (subscription_id, email),
+            )
+            db.log_event(conn, email, "suspend_subscription", "done",
+                         reason="Suspended, not cancelled.", paypal_id=subscription_id)
+            suspended.append(subscription_id)
+
+        fund = {"sent": False, "reason": "Not requested."}
+        if body.send_fund:
+            sent_recently = conn.execute(
+                """select 1 from gate_events where owner_email = %s and action = 'emergency_fund'
+                   and outcome = 'done' and at >= now() - interval '30 days'""",
+                (email,),
+            ).fetchone() is not None
+            reason = fund_refusal(owner["fund_cap"], owner["fund_email"], sent_recently)
+            if reason:
+                fund = {"sent": False, "reason": reason}
+                db.log_event(conn, email, "emergency_fund", "refused", reason=reason)
+            else:
+                batch = paypal().request("POST", "/v1/payments/payouts", json={
+                    "sender_batch_header": {
+                        "sender_batch_id": f"fund-{uuid.uuid4()}",
+                        "email_subject": "Emergency fund from NextOfKin",
+                        "email_message": "You confirmed an emergency as a trusted contact. "
+                                         "This fund covers urgent costs.",
+                    },
+                    "items": [{
+                        "recipient_type": "EMAIL",
+                        "receiver": owner["fund_email"],
+                        "amount": {"value": f"{owner['fund_cap']:.2f}", "currency": CURRENCY},
+                        "note": "Emergency fund",
+                        "sender_item_id": "emergency-fund",
+                    }],
+                })
+                batch_id = batch.get("batch_header", {}).get("payout_batch_id")
+                fund = {"sent": True, "amount": str(owner["fund_cap"]), "payout_batch_id": batch_id}
+                db.log_event(conn, email, "emergency_fund", "done", amount=owner["fund_cap"],
+                             currency=CURRENCY, reason="Sent to the account registered in advance.",
+                             paypal_id=batch_id)
+    return {"email": email, "level": "protection", "voided_authorizations": voided,
+            "subscriptions_suspended": suspended, "subscriptions_failed": failed, "emergency_fund": fund}
+
+
 @app.post("/owners/{email}/resume", dependencies=[Depends(require_api_key)])
 def resume_owner(email: str) -> dict:
-    """The owner is back: the plan returns to normal (G7, the owner always wins)."""
+    """The owner is back: the plan returns to normal and suspended subscriptions
+    are reactivated (G7, the owner always wins)."""
     with db.connect() as conn:
         owner = load_owner(conn, email)
         if owner["level"] == "closure":
             raise HTTPException(status_code=409, detail="The plan is closed and cannot be resumed.")
         conn.execute("update owners set level = 'normal', updated_at = now() where email = %s", (email,))
+        reactivated = []
+        for row in conn.execute(
+            """select subscription_id from suspended_subscriptions
+               where owner_email = %s and reactivated_at is null""",
+            (email,),
+        ).fetchall():
+            try:
+                paypal().request("POST", f"/v1/billing/subscriptions/{row['subscription_id']}/activate",
+                                 json={"reason": "The owner is back."})
+            except PayPalError as error:
+                db.log_event(conn, email, "reactivate_subscription", "error", reason=error.message,
+                             paypal_id=row["subscription_id"])
+                continue
+            conn.execute("update suspended_subscriptions set reactivated_at = now() where subscription_id = %s",
+                         (row["subscription_id"],))
+            db.log_event(conn, email, "reactivate_subscription", "done", paypal_id=row["subscription_id"])
+            reactivated.append(row["subscription_id"])
         db.log_event(conn, email, "resume", "done", reason="The owner answered.")
-    return {"email": email, "level": "normal"}
+    return {"email": email, "level": "normal", "subscriptions_reactivated": reactivated}
 
 
 @app.get("/owners/{email}/rehearsal", dependencies=[Depends(require_api_key)])

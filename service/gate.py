@@ -79,6 +79,17 @@ def simulate(level: str, agents: list[dict], holds: list[dict]) -> dict:
     }
 
 
+def fund_refusal(cap: Decimal | None, fund_email: str | None, sent_recently: bool) -> str | None:
+    """None if the emergency fund may be sent, otherwise why not (G5, G6)."""
+    if not fund_email:
+        return "No PayPal account was registered for the emergency fund."
+    if cap is None or cap <= 0:
+        return "The owner did not set an emergency fund."
+    if sent_recently:
+        return "The emergency fund was already sent in the last 30 days."
+    return None
+
+
 def may_capture(owner_level: str, agent_category: str) -> bool:
     """A held payment is completed only if the agent could still start it now."""
     if owner_level == "closure":
