@@ -15,7 +15,7 @@ from functools import lru_cache
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 import db
 from config import get_settings
@@ -23,7 +23,7 @@ from gate import CURRENCY, LEVELS, fund_refusal, may_capture, refusal, simulate
 from mapping import build_map
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.5.0")
+app = FastAPI(title="NextOfKin service", version="0.5.1")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -198,6 +198,14 @@ class ProtectIn(BaseModel):
     confirmed_by: str = Field(min_length=3)
     subscription_ids: list[str] = []
     send_fund: bool = True
+
+    @field_validator("subscription_ids", mode="before")
+    @classmethod
+    def split_text(cls, value):
+        # No-code tools send a list as one comma-separated string.
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return value
 
 
 @app.post("/owners/{email}/protect", dependencies=[Depends(require_api_key)])
