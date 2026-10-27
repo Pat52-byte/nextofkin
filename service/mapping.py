@@ -23,6 +23,8 @@ KIND_BY_CODE = {
 }
 # S = completed, P = pending. Denied or reversed payments are not part of the map.
 KEPT_STATUSES = {"S", "P"}
+# The emergency fund is sent by NextOfKin itself, not a payment the owner manages.
+FUND_SUBJECT = "Emergency fund from NextOfKin"
 TEXT_LIMIT = 140
 
 
@@ -43,6 +45,9 @@ def build_map(transactions: list[dict], key: str) -> dict:
         info = transaction.get("transaction_info", {})
         code = info.get("transaction_event_code", "")
         if code.startswith(NOISE_PREFIXES) or info.get("transaction_status") not in KEPT_STATUSES:
+            ignored += 1
+            continue
+        if code == "T0001" and info.get("transaction_subject") == FUND_SUBJECT:
             ignored += 1
             continue
 
@@ -73,6 +78,9 @@ def build_map(transactions: list[dict], key: str) -> dict:
                 "counterparty": counterparty,
                 "currency": info["transaction_amount"]["currency_code"],
                 "subscription_id": subscription_id,
+                # Never empty: Zapier drops empty values when it joins line items,
+                # which would misalign references with their decisions.
+                "paypal_reference": subscription_id or "none",
                 "occurrences": 0,
                 "total": Decimal("0"),
                 "first_seen": date,

@@ -20,10 +20,10 @@ from pydantic import BaseModel, Field, field_validator
 import db
 from config import get_settings
 from gate import CURRENCY, LEVELS, fund_refusal, may_capture, refusal, simulate
-from mapping import build_map
+from mapping import FUND_SUBJECT, build_map
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.5.1")
+app = FastAPI(title="NextOfKin service", version="0.5.2")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -258,7 +258,7 @@ def protect_owner(email: str, body: ProtectIn) -> dict:
                 batch = paypal().request("POST", "/v1/payments/payouts", json={
                     "sender_batch_header": {
                         "sender_batch_id": f"fund-{uuid.uuid4()}",
-                        "email_subject": "Emergency fund from NextOfKin",
+                        "email_subject": FUND_SUBJECT,
                         "email_message": "You confirmed an emergency as a trusted contact. "
                                          "This fund covers urgent costs.",
                     },

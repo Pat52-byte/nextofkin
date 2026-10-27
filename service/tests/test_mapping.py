@@ -1,4 +1,4 @@
-from mapping import build_map, pseudonym
+from mapping import FUND_SUBJECT, build_map, pseudonym
 
 KEY = "test-key"
 
@@ -49,6 +49,7 @@ def test_subscription_charges_group_into_one_recurring_item():
     [item] = build_map(charges, KEY)["payments"]
     assert item["kind"] == "subscription"
     assert item["subscription_id"] == "I-SUB1"
+    assert item["paypal_reference"] == "I-SUB1"
     assert item["recurring"] is True
     assert item["occurrences"] == 3
     assert item["total"] == "38.97"
@@ -58,6 +59,7 @@ def test_subscription_charges_group_into_one_recurring_item():
 def test_single_payout_is_not_recurring_until_it_repeats():
     once = build_map([transaction("T0001", "-500.00", "2026-10-01T09:00:00Z", payer=LANDLORD, transaction_subject="Rent")], KEY)
     assert once["payments"][0]["recurring"] is False
+    assert once["payments"][0]["paypal_reference"] == "none"
 
     twice = build_map(
         [
@@ -94,3 +96,15 @@ def test_agent_payments_take_their_description_from_the_cart():
     [item] = build_map([bill], KEY)["payments"]
     assert item["kind"] == "agent_payment"
     assert item["description"] == "Electricity bill"
+
+
+def test_our_own_emergency_fund_is_left_out():
+    result = build_map(
+        [
+            transaction("T0001", "-500.00", "2026-10-27T15:58:00Z", payer=LANDLORD, transaction_subject=FUND_SUBJECT),
+            transaction("T0001", "-500.00", "2026-10-01T09:00:00Z", payer=LANDLORD, transaction_subject="Rent"),
+        ],
+        KEY,
+    )
+    assert [p["description"] for p in result["payments"]] == ["Rent"]
+    assert result["ignored_bookkeeping"] == 1
