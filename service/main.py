@@ -23,7 +23,7 @@ from gate import CURRENCY, LEVELS, fund_refusal, may_capture, refusal, simulate
 from mapping import FUND_SUBJECT, build_map
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.5.2")
+app = FastAPI(title="NextOfKin service", version="0.5.3")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -347,6 +347,20 @@ def owner_events(email: str, limit: int = Query(50, ge=1, le=500),
         load_owner(conn, email)
         events = conn.execute(query, params).fetchall()
     return {"email": email, "events": events}
+
+
+@app.get("/events", dependencies=[Depends(require_api_key)])
+def all_events(since_minutes: int = Query(ge=1, le=44640), limit: int = Query(200, ge=1, le=500)) -> dict:
+    """Gate decisions of every owner, oldest first, so one scheduled sync
+    can copy them all into the Action log in the order they happened."""
+    with db.connect() as conn:
+        events = conn.execute(
+            """select id, at, owner_email, agent_id, action, amount, currency, outcome, reason, paypal_id
+               from gate_events where at >= now() - make_interval(mins => %s)
+               order by at limit %s""",
+            (since_minutes, limit),
+        ).fetchall()
+    return {"count": len(events), "events": events}
 
 
 # Agents -------------------------------------------------------------------
