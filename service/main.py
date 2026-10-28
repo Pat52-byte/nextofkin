@@ -23,7 +23,7 @@ from gate import CURRENCY, LEVELS, fund_refusal, may_capture, refusal, simulate
 from mapping import FUND_SUBJECT, build_map
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.5.3")
+app = FastAPI(title="NextOfKin service", version="0.5.4")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -360,6 +360,11 @@ def all_events(since_minutes: int = Query(ge=1, le=44640), limit: int = Query(20
                order by at limit %s""",
             (since_minutes, limit),
         ).fetchall()
+    for event in events:
+        # One ready-made line for the Action log, so the Zap maps a single field.
+        amount = f"{event['amount']} {event['currency'] or ''}".strip() if event["amount"] is not None else None
+        parts = [event["agent_id"], event["action"], amount, event["outcome"], event["reason"], event["paypal_id"]]
+        event["summary"] = " · ".join(str(part) for part in parts if part)
     return {"count": len(events), "events": events}
 
 
