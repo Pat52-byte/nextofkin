@@ -2,12 +2,16 @@
 may be completed. Pure functions, so every rule can be tested without
 PayPal or a database (guardrails G3, G4, G12)."""
 
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 LEVELS = ("normal", "pause", "protection", "closure")
 # Levels where only essential agents keep paying (plan levels 1 and 2).
 ESSENTIAL_ONLY_LEVELS = {"pause", "protection"}
 CURRENCY = "USD"
+# Level 3 is the only step that can't be undone, so it waits long enough for
+# the owner to answer and stop it (G8).
+CLOSURE_WAIT = timedelta(hours=72)
 
 
 def refusal(
@@ -88,6 +92,15 @@ def fund_refusal(cap: Decimal | None, fund_email: str | None, sent_recently: boo
     if sent_recently:
         return "The emergency fund was already sent in the last 30 days."
     return None
+
+
+def closure_due_at(requested_at: datetime) -> datetime:
+    return requested_at + CLOSURE_WAIT
+
+
+def closure_is_due(requested_at: datetime | None, now: datetime) -> bool:
+    """True only once a confirmed closure request has waited the full 72 hours."""
+    return requested_at is not None and now >= closure_due_at(requested_at)
 
 
 def may_capture(owner_level: str, agent_category: str) -> bool:

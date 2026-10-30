@@ -88,3 +88,12 @@ def test_emergency_fund_goes_only_to_a_registered_account_up_to_the_cap_once():
     assert "registered" in fund_refusal(Decimal("500"), None, False)
     assert "did not set" in fund_refusal(Decimal("0"), "contact@example.com", False)
     assert "already sent" in fund_refusal(Decimal("500"), "contact@example.com", True)
+
+
+def test_closure_waits_the_full_72_hours():
+    from datetime import datetime, timedelta, timezone
+    from gate import closure_is_due
+    asked = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
+    assert not closure_is_due(None, asked)
+    assert not closure_is_due(asked, asked + timedelta(hours=71, minutes=59))
+    assert closure_is_due(asked, asked + timedelta(hours=72))

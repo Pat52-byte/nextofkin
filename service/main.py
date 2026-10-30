@@ -19,11 +19,12 @@ from pydantic import BaseModel, Field, field_validator
 
 import db
 from config import get_settings
-from gate import CURRENCY, LEVELS, fund_refusal, may_capture, refusal, simulate
+from gate import (CURRENCY, LEVELS, closure_due_at, closure_is_due, fund_refusal, may_capture,
+                  refusal, simulate)
 from mapping import FUND_SUBJECT, build_map
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.5.4")
+app = FastAPI(title="NextOfKin service", version="0.6.0")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -160,8 +161,11 @@ def upsert_owner(body: OwnerIn) -> dict:
 
 
 def owner_summary(owner: dict) -> dict:
+    requested_at = owner.get("closure_requested_at")
     return {"email": owner["email"], "level": owner["level"], "has_vault": bool(owner["vault_id"]),
-            "fund_cap": owner["fund_cap"], "has_fund_account": bool(owner["fund_email"])}
+            "fund_cap": owner["fund_cap"], "has_fund_account": bool(owner["fund_email"]),
+            "closure_requested_at": requested_at,
+            "closure_due_at": closure_due_at(requested_at) if requested_at else None}
 
 
 @app.get("/owners/{email}", dependencies=[Depends(require_api_key)])
@@ -287,7 +291,15 @@ def resume_owner(email: str) -> dict:
         owner = load_owner(conn, email)
         if owner["level"] == "closure":
             raise HTTPException(status_code=409, detail="The plan is closed and cannot be resumed.")
-        conn.execute("update owners set level = 'normal', updated_at = now() where email = %s", (email,))
+        # An answer from the owner also stops a closure that is still waiting (G7, G8).
+        conn.execute(
+            """update owners set level = 'normal', closure_requested_at = null,
+               closure_requested_by = null, updated_at = now() where email = %s""",
+            (email,),
+        )
+        if owner["closure_requested_at"]:
+            db.log_event(conn, email, "closure_cancelled", "done",
+                         reason="The owner answered before the 72 hours ended.")
         reactivated = []
         for row in conn.execute(
             """select subscription_id from suspended_subscriptions
@@ -306,7 +318,68 @@ def resume_owner(email: str) -> dict:
             db.log_event(conn, email, "reactivate_subscription", "done", paypal_id=row["subscription_id"])
             reactivated.append(row["subscription_id"])
         db.log_event(conn, email, "resume", "done", reason="The owner answered.")
-    return {"email": email, "level": "normal", "subscriptions_reactivated": reactivated}
+    return {"email": email, "level": "normal", "subscriptions_reactivated": reactivated,
+            "closure_cancelled": bool(owner["closure_requested_at"])}
+
+
+class ClosureIn(BaseModel):
+    # Level 3 never starts without a person confirming it (G2, G8).
+    confirmed_by: str = Field(min_length=3)
+
+
+@app.post("/owners/{email}/closure", dependencies=[Depends(require_api_key)])
+def request_closure(email: str, body: ClosureIn) -> dict:
+    """Plan level 3, step one: the trusted contact reports a death. Nothing is
+    closed yet. Non-essential agents stop now, and the closure takes effect only
+    after 72 hours without an answer from the owner (G8)."""
+    with db.connect() as conn:
+        owner = load_owner(conn, email)
+        if owner["level"] == "closure":
+            raise HTTPException(status_code=409, detail="The plan is already closed.")
+        if owner["closure_requested_at"]:
+            return {**owner_summary(owner), "note": "A closure is already waiting."}
+        level = "protection" if owner["level"] in ("normal", "pause") else owner["level"]
+        conn.execute(
+            """update owners set level = %s, closure_requested_at = now(), closure_requested_by = %s,
+               updated_at = now() where email = %s""",
+            (level, body.confirmed_by, email),
+        )
+        voided = void_holds(conn, email, non_essential_only=True,
+                            reason="Closure requested: payments by non-essential agents are cancelled.")
+        db.log_event(conn, email, "closure_requested", "done",
+                     reason=f"Level 3 requested by {body.confirmed_by}. Takes effect after 72 hours "
+                            "unless the owner answers.")
+        owner = load_owner(conn, email)
+    return {**owner_summary(owner), "voided_authorizations": voided}
+
+
+@app.post("/closures/run", dependencies=[Depends(require_api_key)])
+def run_due_closures() -> dict:
+    """Called on a schedule: closes every plan whose closure request has waited
+    72 hours. Every agent is revoked and every held payment cancelled.
+    Subscriptions stay suspended rather than cancelled, so the family decides."""
+    now = datetime.now(timezone.utc)
+    closed = []
+    with db.connect() as conn:
+        waiting = conn.execute(
+            "select * from owners where closure_requested_at is not null and level <> 'closure'"
+        ).fetchall()
+        for owner in waiting:
+            if not closure_is_due(owner["closure_requested_at"], now):
+                continue
+            email = owner["email"]
+            voided = void_holds(conn, email, reason="Plan closed: every held payment is cancelled.")
+            revoked = [row["id"] for row in conn.execute(
+                """update agents set status = 'revoked' where owner_email = %s and status <> 'revoked'
+                   returning id""",
+                (email,),
+            ).fetchall()]
+            conn.execute("update owners set level = 'closure', updated_at = now() where email = %s", (email,))
+            db.log_event(conn, email, "closure", "done",
+                         reason=f"Level 3: {len(revoked)} agents revoked after 72 hours without an answer.")
+            closed.append({"email": email, "requested_by": owner["closure_requested_by"],
+                           "agents_revoked": revoked, "voided_authorizations": voided})
+    return {"count": len(closed), "closed": closed}
 
 
 @app.get("/owners/{email}/rehearsal", dependencies=[Depends(require_api_key)])

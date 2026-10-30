@@ -47,6 +47,10 @@ create table if not exists holds (
 alter table owners add column if not exists fund_cap numeric(12, 2);
 alter table owners add column if not exists fund_email text;
 
+-- Level 3: a confirmed closure request waits 72 hours before it takes effect.
+alter table owners add column if not exists closure_requested_at timestamptz;
+alter table owners add column if not exists closure_requested_by text;
+
 -- Subscriptions suspended at level 2, so a returning owner gets them back.
 create table if not exists suspended_subscriptions (
     subscription_id  text primary key,
