@@ -24,7 +24,7 @@ from gate import (CURRENCY, LEVELS, closure_due_at, closure_is_due, fund_refusal
 from mapping import FUND_SUBJECT, build_map
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.6.0")
+app = FastAPI(title="NextOfKin service", version="0.6.1")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -300,26 +300,59 @@ def resume_owner(email: str) -> dict:
         if owner["closure_requested_at"]:
             db.log_event(conn, email, "closure_cancelled", "done",
                          reason="The owner answered before the 72 hours ended.")
-        reactivated = []
-        for row in conn.execute(
-            """select subscription_id from suspended_subscriptions
-               where owner_email = %s and reactivated_at is null""",
-            (email,),
-        ).fetchall():
-            try:
-                paypal().request("POST", f"/v1/billing/subscriptions/{row['subscription_id']}/activate",
-                                 json={"reason": "The owner is back."})
-            except PayPalError as error:
-                db.log_event(conn, email, "reactivate_subscription", "error", reason=error.message,
-                             paypal_id=row["subscription_id"])
-                continue
-            conn.execute("update suspended_subscriptions set reactivated_at = now() where subscription_id = %s",
-                         (row["subscription_id"],))
-            db.log_event(conn, email, "reactivate_subscription", "done", paypal_id=row["subscription_id"])
-            reactivated.append(row["subscription_id"])
+        reactivated = reactivate_subscriptions(conn, email)
         db.log_event(conn, email, "resume", "done", reason="The owner answered.")
     return {"email": email, "level": "normal", "subscriptions_reactivated": reactivated,
             "closure_cancelled": bool(owner["closure_requested_at"])}
+
+
+def reactivate_subscriptions(conn, email: str) -> list[str]:
+    reactivated = []
+    for row in conn.execute(
+        """select subscription_id from suspended_subscriptions
+           where owner_email = %s and reactivated_at is null""",
+        (email,),
+    ).fetchall():
+        try:
+            paypal().request("POST", f"/v1/billing/subscriptions/{row['subscription_id']}/activate",
+                             json={"reason": "The owner is back."})
+        except PayPalError as error:
+            db.log_event(conn, email, "reactivate_subscription", "error", reason=error.message,
+                         paypal_id=row["subscription_id"])
+            continue
+        conn.execute("update suspended_subscriptions set reactivated_at = now() where subscription_id = %s",
+                     (row["subscription_id"],))
+        db.log_event(conn, email, "reactivate_subscription", "done", paypal_id=row["subscription_id"])
+        reactivated.append(row["subscription_id"])
+    return reactivated
+
+
+# The sandbox owner every judge tries the demo with. Resetting touches only this plan.
+DEMO_OWNER = "sb-bcvyt53337457@personal.example.com"
+
+
+@app.post("/demo/reset", dependencies=[Depends(require_api_key)])
+def reset_demo() -> dict:
+    """Put the demo owner back to the start, so the next judge finds the same
+    story: plan normal, agents active, subscriptions running, emergency fund
+    available again. Only sandbox data is touched."""
+    with db.connect() as conn:
+        load_owner(conn, DEMO_OWNER)
+        conn.execute(
+            """update owners set level = 'normal', closure_requested_at = null,
+               closure_requested_by = null, updated_at = now() where email = %s""",
+            (DEMO_OWNER,),
+        )
+        reactivated = reactivate_subscriptions(conn, DEMO_OWNER)
+        agents = [row["id"] for row in conn.execute(
+            "update agents set status = 'active' where owner_email = %s returning id", (DEMO_OWNER,)
+        ).fetchall()]
+        # The fund may be sent once per 30 days; the demo must be able to show it again.
+        conn.execute("delete from gate_events where owner_email = %s and action = 'emergency_fund'",
+                     (DEMO_OWNER,))
+        db.log_event(conn, DEMO_OWNER, "demo_reset", "done", reason="Demo put back to the start.")
+    return {"email": DEMO_OWNER, "level": "normal", "agents_active": agents,
+            "subscriptions_reactivated": reactivated}
 
 
 class ClosureIn(BaseModel):
