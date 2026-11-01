@@ -19,12 +19,12 @@ from pydantic import BaseModel, Field, field_validator
 
 import db
 from config import get_settings
-from gate import (CURRENCY, LEVELS, closure_due_at, closure_is_due, fund_refusal, may_capture,
+from gate import (CLOSURE_WAIT, CURRENCY, LEVELS, closure_due_at, closure_is_due, fund_refusal, may_capture,
                   refusal, simulate)
 from mapping import FUND_SUBJECT, build_map
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.6.1")
+app = FastAPI(title="NextOfKin service", version="0.7.0")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -355,6 +355,24 @@ def reset_demo() -> dict:
             "subscriptions_reactivated": reactivated}
 
 
+@app.post("/demo/skip-closure-wait", dependencies=[Depends(require_api_key)])
+def skip_closure_wait() -> dict:
+    """Demo only: judges can't wait 72 hours, so this moves the demo owner's
+    waiting closure request back in time and runs the scheduled closing now.
+    Real plans always wait the full 72 hours; the demo reset undoes it."""
+    with db.connect() as conn:
+        owner = load_owner(conn, DEMO_OWNER)
+        if not owner["closure_requested_at"] or owner["level"] == "closure":
+            raise HTTPException(status_code=409, detail="The demo plan has no closure waiting.")
+        conn.execute(
+            "update owners set closure_requested_at = closure_requested_at - %s where email = %s",
+            (CLOSURE_WAIT, DEMO_OWNER),
+        )
+        db.log_event(conn, DEMO_OWNER, "demo_skip_wait", "done",
+                     reason="Demo only: the 72-hour wait was skipped.")
+    return run_due_closures()
+
+
 class ClosureIn(BaseModel):
     # Level 3 never starts without a person confirming it (G2, G8).
     confirmed_by: str = Field(min_length=3)
@@ -468,10 +486,55 @@ def all_events(since_minutes: int = Query(ge=1, le=44640), limit: int = Query(20
         ).fetchall()
     for event in events:
         # One ready-made line for the Action log, so the Zap maps a single field.
-        amount = f"{event['amount']} {event['currency'] or ''}".strip() if event["amount"] is not None else None
-        parts = [event["agent_id"], event["action"], amount, event["outcome"], event["reason"], event["paypal_id"]]
-        event["summary"] = " · ".join(str(part) for part in parts if part)
+        event["summary"] = event_summary(event)
     return {"count": len(events), "events": events}
+
+
+def event_summary(event: dict) -> str:
+    amount = f"{event['amount']} {event['currency'] or ''}".strip() if event["amount"] is not None else None
+    parts = [event["agent_id"], event["action"], amount, event["outcome"], event["reason"], event["paypal_id"]]
+    return " · ".join(str(part) for part in parts if part)
+
+
+@app.get("/owners/{email}/family-briefing", dependencies=[Depends(require_api_key)])
+def family_briefing(email: str) -> dict:
+    """What the family assistant may know about one closed plan, as plain text
+    for the AI. Only this owner's records, and only once the plan is closed."""
+    with db.connect() as conn:
+        owner = load_owner(conn, email)
+        if owner["level"] != "closure":
+            raise HTTPException(status_code=409, detail="The family assistant opens only after the plan is closed.")
+        agents = conn.execute(
+            "select name, category, status, spending_cap from agents where owner_email = %s order by created_at",
+            (email,),
+        ).fetchall()
+        subscriptions = conn.execute(
+            """select subscription_id, suspended_at, reactivated_at from suspended_subscriptions
+               where owner_email = %s order by suspended_at""",
+            (email,),
+        ).fetchall()
+        events = conn.execute(
+            """select at, agent_id, action, amount, currency, outcome, reason, paypal_id
+               from gate_events where owner_email = %s order by at desc limit 100""",
+            (email,),
+        ).fetchall()
+    lines = [
+        "Plan status: closed. The trusted contact confirmed a death, and the plan closed after "
+        "72 hours without an answer from the owner. The dates are in the decisions below.",
+        "",
+        "Agents (all have lost their permission to pay):",
+        *([f"- {a['name']} ({a['category'].replace('_', '-')}, cap {a['spending_cap']} {CURRENCY}): {a['status']}"
+           for a in agents] or ["- none"]),
+        "",
+        "Subscriptions suspended by NextOfKin (suspended, not cancelled; the family decides):",
+        *([f"- {s['subscription_id']}: suspended on {s['suspended_at']:%Y-%m-%d}"
+           + (f", active again since {s['reactivated_at']:%Y-%m-%d}" if s["reactivated_at"] else ", still suspended")
+           for s in subscriptions] or ["- none"]),
+        "",
+        "Recent decisions, newest first:",
+        *[f"- {e['at']:%Y-%m-%d %H:%M} UTC: {event_summary(e)}" for e in events],
+    ]
+    return {"email": email, "briefing": "\n".join(lines)}
 
 
 # Agents -------------------------------------------------------------------
