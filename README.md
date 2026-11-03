@@ -78,7 +78,8 @@ Open the app: **https://cmvggp6wq0049bllc9x0fico9.zapier.app/**. No login is nee
 | Try this | Page | What you should see |
 |---|---|---|
 | Ask the grocery agent for something under 150 USD, like "milk, eggs and bread" | Ask your grocery agent | Claude prepares the order, and the gate holds the payment on PayPal |
-| Ask for something that can't fit, like "a party for 50 people" or "20 bottles of champagne" | Ask your grocery agent | Claude shrinks the order. If the total is still above the cap, the gate refuses it and says why. |
+| Paste a bill above the bills agent's 400 USD cap, like "Electricity bill, amount due: 520.00 USD" | Ask your bills agent | The gate refuses it before PayPal is called, and says why: "The amount is above this agent's spending cap of 400.00 USD." |
+| Ask the grocery agent for something too big, like "a party for 50 people" | Ask your grocery agent | Claude shrinks the order to fit the 150 USD cap |
 | See what the gate stopped, and why | [Activity log](https://cmvggp6wq0049bllc9x0fico9.zapier.app/activity-log) | Every refusal with its reason, such as "The amount is above this agent's spending cap of 150.00 USD" |
 | See the owner's plan: payments, agents and their caps | Your plan | What keeps being paid in an emergency, and what waits |
 | See what the family would see after a closure | For the family | The payments in the plan, and every decision with who made it |
