@@ -8,6 +8,7 @@ Three jobs, all done with fixed rules rather than the AI:
 
 import hashlib
 import hmac
+import re
 from decimal import Decimal
 
 # Event codes are PayPal's transaction types. These families are not payments
@@ -31,6 +32,14 @@ TEXT_LIMIT = 140
 def pseudonym(value: str, key: str, prefix: str) -> str:
     digest = hmac.new(key.encode(), value.encode(), hashlib.sha256).hexdigest()
     return f"{prefix}-{digest[:8]}"
+
+
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+(\.[\w-]+)+")
+
+
+def hide_emails(text: str | None) -> str | None:
+    """For anything shown publicly: e-mail addresses become a placeholder."""
+    return EMAIL.sub("[email hidden]", text) if text else text
 
 
 def _short(text: str | None) -> str | None:

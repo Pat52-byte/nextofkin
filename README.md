@@ -6,6 +6,8 @@ AI agents now pay on our behalf: groceries, bills, subscriptions. Their permissi
 
 NextOfKin is a continuity plan for agents that pay. It checks in with the owner. When the owner stops answering, it steps in gradually and reversibly, and it brings in a trusted contact. Essential bills keep being paid, everything else waits, and the family can see what happened and why.
 
+**▶ Demo video (under 3 minutes): https://youtu.be/cQlvyMbraV8** · **Try it: https://cmvggp6wq0049bllc9x0fico9.zapier.app/** (no login)
+
 > **The AI proposes. Fixed rules decide.** Claude classifies payments, prepares grocery orders and answers the family's questions. Every action on money goes through a gate that applies fixed rules and logs each decision.
 
 ## The three levels
@@ -75,15 +77,21 @@ Everything runs in the PayPal sandbox, so no real money moves. The demo owner is
 
 Open the app: **https://cmvggp6wq0049bllc9x0fico9.zapier.app/**. No login is needed.
 
+When a form asks for an email, use John's sandbox email: **sb-bcvyt53337457@personal.example.com**.
+
+To see the gate's decisions the moment they happen, open **https://nextofkin-service.onrender.com/demo/activity**. It lists John's latest decisions with the PayPal ID of each payment. It's read-only, and email addresses are hidden. The first call can take about a minute if the service was asleep, and the agents take a minute or two to answer, so reload it after that.
+
 | Try this | Page | What you should see |
 |---|---|---|
-| Ask the grocery agent for something under 150 USD, like "milk, eggs and bread" | Ask your grocery agent | Claude prepares the order, and the gate holds the payment on PayPal |
-| Paste a bill above the bills agent's 400 USD cap, like "Electricity bill, amount due: 520.00 USD" | Ask your bills agent | The gate refuses it before PayPal is called, and says why: "The amount is above this agent's spending cap of 400.00 USD." |
+| Ask the grocery agent for something under 150 USD, like "milk, eggs and bread" | Ask your grocery agent | Claude prepares the order. In the live decisions, a new line `grocery-agent · pay · … USD · held` with its PayPal ID: the payment is held on PayPal, not taken. |
+| Paste a bill above the bills agent's 400 USD cap, like "Electricity bill, amount due: 520.00 USD" | Ask your bills agent | In the live decisions: `refused · The amount is above this agent's spending cap of 400.00 USD.` The gate refuses it before PayPal is called. |
 | Ask the grocery agent for something too big, like "a party for 50 people" | Ask your grocery agent | Claude shrinks the order to fit the 150 USD cap |
-| See what the gate stopped, and why | [Activity log](https://cmvggp6wq0049bllc9x0fico9.zapier.app/activity-log) | Every refusal with its reason, such as "The amount is above this agent's spending cap of 150.00 USD" |
+| See every decision the plan made, and who made it | [Activity log](https://cmvggp6wq0049bllc9x0fico9.zapier.app/activity-log) | Refusals with their reason, pauses, protection, closure. This page is copied from the gate every 6 hours. |
 | See the owner's plan: payments, agents and their caps | Your plan | What keeps being paid in an emergency, and what waits |
 | See what the family would see after a closure | For the family | The payments in the plan, and every decision with who made it |
 | Run the evals yourself | Evals | Claude classifies 27 payments and prepares 15 grocery orders, and each case is marked Pass or Fail. Takes 1 to 2 minutes. |
+
+You can also create your own plan in **Create your plan**, with your own email: you'll get the trusted-contact invitation and the daily check-in. PayPal and the AI agents are connected only to the demo owner, John, so use John to see payments held, refused and cancelled. John's emergency fund can't be changed from the form.
 
 Levels 2 and 3 need a real trusted contact, and the family assistant answers only that person by email. These are shown end to end in the video. To replay them in code, see the [attack tests](docs/evals/attack-tests.md) and the endpoints below. If something looks off, [Reset the demo](https://cmvggp6wq0049bllc9x0fico9.zapier.app/reset-the-demo) puts John back to the start.
 
@@ -115,7 +123,7 @@ Levels 2 and 3 need a real trusted contact, and the family assistant answers onl
 
 ## Service endpoints
 
-Every endpoint except `/health` and `/gate/pay` requires the header `X-Api-Key`.
+Every endpoint except `/health`, `/demo/activity` and `/gate/pay` requires the header `X-Api-Key`.
 
 | Endpoint | What it does |
 |---|---|
@@ -136,6 +144,7 @@ Every endpoint except `/health` and `/gate/pay` requires the header `X-Api-Key`.
 | `POST /gate/pay` | **Agents only**, with `X-Agent-Key`. Asks to pay. A refusal is a normal `200` answer with `"outcome": "refused"` and the reason. |
 | `POST /gate/settle` | Completes the held payments that may still go through |
 | `POST /demo/reset`, `POST /demo/skip-closure-wait` | Demo only, demo owner only. See [known limits](docs/known-limits.md). |
+| `GET /demo/activity` | Demo only, no key: the demo owner's latest gate decisions, with email addresses hidden |
 
 ## Run the service locally
 
@@ -149,7 +158,7 @@ uvicorn main:app --reload
 
 Then open http://127.0.0.1:8000/health. Run the tests with `python -m pytest`.
 
-Set these in `service/.env` locally and in the Render dashboard in production. Never commit them.
+Copy `service/.env.example` to `service/.env` and fill in the values locally. In production, set them in the Render dashboard. Never commit them.
 
 | Variable | Purpose |
 |---|---|
@@ -158,6 +167,12 @@ Set these in `service/.env` locally and in the Render dashboard in production. N
 | `SERVICE_API_KEY` | Shared secret that Zapier sends in `X-Api-Key` |
 | `PSEUDONYM_KEY` | Key that turns people's details into stable codes before the AI sees them |
 | `DATABASE_URL` | Postgres connection string (Neon) |
+
+## AI tools used to build it
+
+- **Claude (Anthropic)** runs inside the product, in the four places listed in [How it's built](#how-its-built).
+- **Claude Code** wrote the service, its tests and the eval scripts, under my design and review. The system, the rules, the evals, the Zaps and the Interfaces pages were designed and built by me.
+- **Gemini** made the illustrations in the video. **CapCut** made the AI voiceover.
 
 ## License
 

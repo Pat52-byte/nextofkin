@@ -1,4 +1,4 @@
-from mapping import FUND_SUBJECT, build_map, pseudonym
+from mapping import FUND_SUBJECT, build_map, hide_emails, pseudonym
 
 KEY = "test-key"
 
@@ -108,3 +108,9 @@ def test_our_own_emergency_fund_is_left_out():
     )
     assert [p["description"] for p in result["payments"]] == ["Rent"]
     assert result["ignored_bookkeeping"] == 1
+
+
+def test_public_text_hides_email_addresses():
+    reason = "Level 3 requested by jane.doe+test@mail.example.com. Takes effect after 72 hours."
+    assert hide_emails(reason) == "Level 3 requested by [email hidden]. Takes effect after 72 hours."
+    assert hide_emails(None) is None

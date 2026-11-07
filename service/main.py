@@ -21,10 +21,10 @@ import db
 from config import get_settings
 from gate import (CLOSURE_WAIT, CURRENCY, LEVELS, closure_due_at, closure_is_due, fund_refusal, may_capture,
                   refusal, simulate)
-from mapping import FUND_SUBJECT, build_map
+from mapping import FUND_SUBJECT, build_map, hide_emails
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.7.0")
+app = FastAPI(title="NextOfKin service", version="0.7.1")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -147,6 +147,13 @@ def upsert_owner(body: OwnerIn) -> dict:
         ):
             # G5, G6: where the emergency fund goes, and how much, is frozen during an emergency.
             raise HTTPException(status_code=409, detail="The emergency fund can't be changed during an emergency.")
+        if current and body.email == DEMO_OWNER and (
+            (body.fund_email and body.fund_email != current["fund_email"])
+            or (body.fund_cap is not None and body.fund_cap != current["fund_cap"])
+            or (body.vault_id and body.vault_id != current["vault_id"])
+        ):
+            # The public "Create your plan" form must not redirect the demo owner's fund.
+            raise HTTPException(status_code=409, detail="The demo owner's plan can't be changed from the form.")
         conn.execute(
             """insert into owners (email, vault_id, fund_cap, fund_email) values (%s, %s, %s, %s)
                on conflict (email) do update
@@ -371,6 +378,24 @@ def skip_closure_wait() -> dict:
         db.log_event(conn, DEMO_OWNER, "demo_skip_wait", "done",
                      reason="Demo only: the 72-hour wait was skipped.")
     return run_due_closures()
+
+
+@app.get("/demo/activity")
+def demo_activity(limit: int = Query(20, ge=1, le=100)) -> dict:
+    """Public and read-only, for judges: the demo owner's latest gate decisions,
+    the moment they happen. The Action log in Interfaces syncs only every 6 hours.
+    No key needed, demo owner only, and e-mail addresses are hidden."""
+    with db.connect() as conn:
+        owner = load_owner(conn, DEMO_OWNER)
+        events = conn.execute(
+            """select at, agent_id, action, amount, currency, outcome, reason, paypal_id
+               from gate_events where owner_email = %s order by at desc limit %s""",
+            (DEMO_OWNER, limit),
+        ).fetchall()
+    for event in events:
+        event["reason"] = hide_emails(event["reason"])
+        event["summary"] = event_summary(event)
+    return {"owner": "John Doe (PayPal sandbox)", "plan_level": owner["level"], "events": events}
 
 
 class ClosureIn(BaseModel):

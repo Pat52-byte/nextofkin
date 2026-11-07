@@ -12,16 +12,18 @@ NextOfKin was built in four weeks for the PayPal AI Hackathon. This page lists w
 ## Demo shortcuts
 
 - **PayPal sandbox only.** Every account, payment and subscription is a sandbox one.
+- **The app's account stands in for the owner's.** Transaction Search reads the transactions of the account that owns the app, and the Subscriptions API can suspend only subscriptions sold by that account. In the demo, the app's sandbox account plays John's side, so the payment map and the paused subscription are real API calls on real sandbox data. For a real user, PayPal would need to let a person share their own payment history and subscriptions with a service like this. That's the step we'd build with PayPal.
 - **Demo-only endpoints.** `POST /demo/reset` and `POST /demo/skip-closure-wait` exist so a judge can replay the story in minutes instead of 72 hours. They only work on the demo owner, and a real deployment would remove them.
 - **The family assistant knows the owner's name from its prompt.** The name "John" is written into the prompt, because the demo has one owner. With more owners, the name would come from the Owners table.
 - **A trusted contact for two owners is matched to the first one.** The Zaps look up trusted contacts by email and take the first match.
 - **The service sleeps when idle.** It runs on Render's free plan, so the first call after a quiet period can take about a minute.
-- **The Action log updates every 6 hours.** Zap Z12 copies the gate's decisions on a schedule, so a refusal can take a few hours to appear in Interfaces. The service's own log (`GET /events`) is immediate.
+- **The Action log updates every 6 hours.** Zap Z12 copies the gate's decisions on a schedule, so a refusal can take a few hours to appear in Interfaces. The service's own log is immediate, and judges can read the demo owner's part of it at [/demo/activity](https://nextofkin-service.onrender.com/demo/activity).
 
 ## Planned, not built
 
 | Item | What it would do | Why it waited |
 |---|---|---|
+| Connect PayPal for a new user | At the end of "Create your plan", a PayPal approval link saves the new owner's permission in the Vault and registers their agents. Today this step is done through the service for the demo owner. | A plan created from the form works (invitation, check-ins, levels), but has no PayPal permission or agents yet. |
 | Z7, PayPal alerts | Verify PayPal webhook signatures, and alert the owner if an agent tries to pay while the plan is paused | The gate already refuses these payments and logs them. Z7 would add a push alert. |
 | Z8, new recurring payments | Each week, ask the owner how to classify a payment that started recently | Z1 already maps all payments. Z8 would ask only about new ones. |
 | Two trusted contacts | Both must confirm before level 2 (S2) | One contact plus the 72-hour wait was enough for the demo. |
