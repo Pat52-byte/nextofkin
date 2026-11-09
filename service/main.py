@@ -14,7 +14,7 @@ from decimal import Decimal
 from functools import lru_cache
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
 import db
@@ -22,9 +22,10 @@ from config import get_settings
 from gate import (CLOSURE_WAIT, CURRENCY, LEVELS, closure_due_at, closure_is_due, fund_refusal, may_capture,
                   refusal, simulate)
 from mapping import FUND_SUBJECT, build_map, hide_emails
+from pages import activity_page
 from paypal import PayPalClient, PayPalError
 
-app = FastAPI(title="NextOfKin service", version="0.7.1")
+app = FastAPI(title="NextOfKin service", version="0.7.2")
 
 AGENT_ID = re.compile(r"^[a-z0-9-]{2,40}$")
 
@@ -380,8 +381,21 @@ def skip_closure_wait() -> dict:
     return run_due_closures()
 
 
-@app.get("/demo/activity")
-def demo_activity(limit: int = Query(20, ge=1, le=100)) -> dict:
+@app.get("/", include_in_schema=False)
+def home() -> RedirectResponse:
+    """Whoever opens the bare address lands on the judges' page, not on an error."""
+    return RedirectResponse("/demo/activity")
+
+
+@app.get("/demo/activity", response_class=HTMLResponse)
+def demo_activity_page(limit: int = Query(100, ge=1, le=100)) -> str:
+    """The same decisions as /demo/activity.json, as a page a judge can read."""
+    data = demo_activity(limit)
+    return activity_page(data["plan_level"], data["events"])
+
+
+@app.get("/demo/activity.json")
+def demo_activity(limit: int = Query(100, ge=1, le=100)) -> dict:
     """Public and read-only, for judges: the demo owner's latest gate decisions,
     the moment they happen. The Action log in Interfaces syncs only every 6 hours.
     No key needed, demo owner only, and e-mail addresses are hidden."""

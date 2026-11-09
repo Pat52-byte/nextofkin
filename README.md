@@ -125,6 +125,8 @@ Levels 2 and 3 need a real trusted contact, and the family assistant answers onl
 
 Every endpoint except `/health`, `/demo/activity` and `/gate/pay` requires the header `X-Api-Key`.
 
+The service lists its endpoints itself at [/docs](https://nextofkin-service.onrender.com/docs).
+
 | Endpoint | What it does |
 |---|---|
 | `GET /health` | Liveness check, no key needed |
@@ -144,7 +146,7 @@ Every endpoint except `/health`, `/demo/activity` and `/gate/pay` requires the h
 | `POST /gate/pay` | **Agents only**, with `X-Agent-Key`. Asks to pay. A refusal is a normal `200` answer with `"outcome": "refused"` and the reason. |
 | `POST /gate/settle` | Completes the held payments that may still go through |
 | `POST /demo/reset`, `POST /demo/skip-closure-wait` | Demo only, demo owner only. See [known limits](docs/known-limits.md). |
-| `GET /demo/activity` | Demo only, no key: the demo owner's latest gate decisions, with email addresses hidden |
+| `GET /demo/activity`, `GET /demo/activity.json` | Demo only, no key: the demo owner's latest gate decisions as a page and as data, with email addresses hidden. `/` opens the page. |
 
 ## Run the service locally
 
